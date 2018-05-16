@@ -1,0 +1,577 @@
+Main = Instance.new("ScreenGui")
+Main2 = Instance.new("Frame")
+PhantomHax = Instance.new("TextLabel")
+ESPAimbot = Instance.new("TextButton")
+Noclip = Instance.new("TextButton")
+
+Main.Name = "Main"
+Main.Parent = game.Players.LocalPlayer.PlayerGui
+
+Main2.Name = "Main#2"
+Main2.Parent = Main
+Main2.BackgroundColor3 = Color3.new(1, 1, 1)
+Main2.Position = UDim2.new(0.831585467, 0, 0, 0)
+Main2.Size = UDim2.new(0, 273, 0, 197)
+
+PhantomHax.Name = "Phantom Hax"
+PhantomHax.Parent = Main2
+PhantomHax.BackgroundColor3 = Color3.new(1, 1, 1)
+PhantomHax.BorderSizePixel = 0
+PhantomHax.Position = UDim2.new(0.182706982, 0, 0.0740740746, 0)
+PhantomHax.Size = UDim2.new(0, 200, 0, 50)
+PhantomHax.Font = Enum.Font.Cartoon
+PhantomHax.FontSize = Enum.FontSize.Size14
+PhantomHax.Text = "Phantom Hax"
+PhantomHax.TextColor3 = Color3.new(0, 0, 0)
+PhantomHax.TextScaled = true
+PhantomHax.TextSize = 14
+PhantomHax.TextWrapped = true
+
+ESPAimbot.Name = "ESP/Aimbot"
+ESPAimbot.Parent = PhantomHax
+ESPAimbot.BackgroundColor3 = Color3.new(0, 0, 0)
+ESPAimbot.Position = UDim2.new(0.00129789114, 0, 1.22873831, 0)
+ESPAimbot.Size = UDim2.new(0, 200, 0, 50)
+ESPAimbot.Font = Enum.Font.Cartoon
+ESPAimbot.FontSize = Enum.FontSize.Size14
+ESPAimbot.Text = "ESP/Aimbot"
+ESPAimbot.TextColor3 = Color3.new(1, 1, 1)
+ESPAimbot.TextScaled = true
+ESPAimbot.TextSize = 14
+ESPAimbot.TextWrapped = true
+
+(ESPAimbot).MouseButton1Down:connect(function()
+local accuracy = 80
+local aimkey = "f" --Disable/Enable AimWorks
+local toggle_teamcheck = "h" --Ez-Pz Fix so people don't have to rejoin on FFA/TDM Games.
+local lassokey = "q" --Disable/Enable Lasso Rendering
+local control = "p" --Hide/UnHide Gui
+local headshot = 35
+local ignoreFOV    =  true
+local ignoreWalls  =  true
+local perfect_aim  =  true
+local perfect_aim_firstperson_distance = 28
+local rage_triggers = false --Elysian Only
+local RenderLassos =  true
+local ShootingTeam =  false -- will target neutral people anyways XDDD
+local SpreadControlRadius = Vector3.new(25, 25, 15) -- the larger you make those numbers the more likely your bullet is to hit. anything above 25, 25, 25 is a bit much. try 15, 15, 5
+local trigger_speed = 0.1
+local triggers  =  false --Elysian Only
+local Chams = true --Works now!??!!?
+ 
+--Player Whitelist(People who don't get shot at.)
+local Whitelist = {"vvs_Elii","AlienwareAuroraR5","X53Y","SecondGenDev"}
+for i,v in pairs(game.Players:GetChildren()) do  --Adds anyone in-game who's friends with the Currenet player into the list.
+    if game.Players.LocalPlayer:IsFriendsWith(v.userId) then
+        table.insert(Whitelist, v.Name)
+    end
+end
+ 
+game.Players.PlayerAdded:connect(function(player) --Adds friends to whitelist if they're just joining the game.
+    if game.Players.LocalPlayer:IsFriendsWith(player.userId) then
+        table.insert(Whitelist, player.Name)
+    end
+end)
+ 
+-- todo --
+_G.SwordFightMode = false -- stuff that i am testing goes in _G. so i can toggle it
+ 
+-- aim engine vars
+-- todo: more priorities
+-- prune dead vars
+local aim_through_list = {nil, nil, nil}
+local bone_name
+local camera = workspace.CurrentCamera
+local closest_distance
+local deathBlock
+local distance
+local FilteringEnabled = workspace.FilteringEnabled
+local huge = math.huge
+local in_fov
+local lasso
+local localplayer = game:GetService("Players").LocalPlayer
+local most_viable_player
+local mouse = localplayer:GetMouse()
+local CreatorId = game.CreatorId
+local players_service = game:GetService("Players")
+local position
+local random = math.random
+local ray = Ray.new
+local ray_start
+local running = true
+local sleeping
+local target
+local tele_bone
+local targ_bone
+local ticksslept = 0
+local trigger_debounce
+local vector
+local viableplayers = {}
+ 
+local function FindInstance(instance_className, search_directory) -- i can inline this in a LOT of places... plus i can very very easily make this return a table of all found parts if a certain parameter is passed... might add that feature to my boilerplate
+ 
+    if not search_directory then return end
+ 
+    for i, v in pairs(search_directory:GetChildren()) do
+        if v.className == instance_className then
+            return(v)
+        end
+    end
+ 
+end
+ 
+local function CreateBlockOfDeath()
+ 
+    if deathBlock then deathBlock:Destroy() end
+ 
+    deathBlock = Instance.new("Part", workspace)
+    deathBlock.CanCollide = false
+    deathBlock.Size = SpreadControlRadius
+    deathBlock.Locked = true
+    mouse.TargetFilter = deathBlock
+    return deathBlock -- unnecessary
+ 
+end -- Finished
+ 
+local function ReturnsScreenCoordinatesAsVectorAndFOVChecksAsBool(player, bone) -- note: figure out what i wanted to do with datas in here
+ 
+    if not bone then
+        return {_, false}
+    end
+ 
+    return camera:WorldToScreenPoint(player.Character[bone].Position)
+ 
+end
+ 
+local function ReturnsPlayerCheckResults(player)
+ 
+    -- Checks teams. If we won't shoot teammates and they're a teammate when we're not neutral, target them. We do this now because it can save a lot of FPS.
+    if not ShootingTeam then -- if not shooting teammates
+        if player.TeamColor == localplayer.TeamColor then -- if we're not shooting teammates and they're teammates
+            if not (player.Neutral and localplayer.Neutral) then -- if we're not shooting teammates and they're teammates and they're not neutral
+                return false
+            end
+        end
+    end
+   
+    --Read through player 'Whitelist'
+    for i,v in pairs(Whitelist) do
+        if player.Name == v then
+            return false
+        end
+    end
+   
+    -- Checks if person is yourself.
+    if player == localplayer then
+        return false
+    end
+ 
+    -- Checks if the player can be hurt.
+    if FindInstance("ForceField", player.Character) or FindInstance("Humanoid", player.Character, true).MaxHealth == huge then
+        return false
+    end
+ 
+    -- Checks if they're dead.
+    if FindInstance("Humanoid", player.Character, true).Health == 0 then
+        return false
+    end
+ 
+    -- Checks if person is in FOV.
+    local screen_position, in_fov = ReturnsScreenCoordinatesAsVectorAndFOVChecksAsBool(player, "Torso")
+    if not (in_fov or ignoreFOV) then
+        return false
+    else
+        return player, screen_position
+    end
+ 
+end
+ 
+local function ReturnsBoneOrFalse(player)
+ 
+    if perfect_aim then
+        return (FilteringEnabled and "Head" or "Left Arm") -- should be Head or left arm
+    end
+ 
+    if not (random(1, 100) <= accuracy) then
+        return false
+    end
+ 
+    if (random(1, 100) <= headshot) and FilteringEnabled then
+        return "Head"
+    end
+ 
+    return "Left Arm" -- should be left arm
+ 
+end
+ 
+ 
+-- rewrite for cursor distance checks then optimize
+local function ReturnsViablePlayerOrNil() -- this is a clusterfuck i should probably branch this off into more functions... especially one for raycasting
+    aim_through_list[1], aim_through_list[2] = deathBlock, localplayer.Character
+    local distance = 1000
+    local closest_distance = 1000
+    local most_viable_player = nil
+ 
+    -- FPS optimizations for shitty pcs... should more than double FPS in some situations. not really necessary for me :D..
+    -- if sleeping and ticksslept ~= 15 then
+    --  ticksslept = ticksslept + 1
+    --  return target
+    -- end
+ 
+    local your_character = localplayer.Character
+    local your_head = your_character and your_character:FindFirstChild "Head"
+ 
+    for i, player_being_checked in pairs(players_service:GetPlayers()) do -- getplayers is underrated
+ 
+        local player_or_false, targets_coordinates = ReturnsPlayerCheckResults(player_being_checked)
+ 
+        if player_or_false then
+ 
+            local char = player_being_checked.Character
+            local target_torso = char and char:FindFirstChild "Torso" -- where the ray will aim/shoot for
+ 
+            if target_torso then
+ 
+                -- phantom fuckery tbh
+                -- aim ahead (why arent we just taking advantage of ignorerays austin tf) of gun sights... Swag :O
+                if (camera.Focus.p - camera.CoordinateFrame.p).magnitude <= 1 then
+                    ray_start = your_head.Position + your_head.CFrame.lookVector * 10 + Vector3.new(0, 3, 0)
+                else
+                    ray_start = your_head.Position + Vector3.new(0, 2, 0)
+                end
+ 
+                -- ray_start = your_head.Position + your_head.CFrame.lookVector * 10 + Vector3.new(0, 3, 0) -- doododoo do DOODODOododoDoERFAhaagr
+ 
+                if not targets_coordinates then -- unnecessary rn
+                    distance = (Vector2.new(targets_coordinates.X, targets_coordinates.Y) - Vector2.new(mouse.X, mouse.Y)).magnitude -- broken
+                else
+                    distance = (Vector2.new(targets_coordinates.X, targets_coordinates.Y) - Vector2.new(mouse.X, mouse.Y)).magnitude
+                end
+                vector = (target_torso.Position - ray_start)
+ 
+                -- distance = vector -- bug
+ 
+                if (not targets_coordinates) or (distance <= closest_distance) then
+ 
+                    -- create ray that starts at 'ray_start' and points towards the target
+                    local new_ray = ray(ray_start, vector.unit * 1000) -- "fire" ray and make sure to ignore our own character
+                    local hit, position = workspace:FindPartOnRayWithIgnoreList(new_ray, aim_through_list) -- check if the ray hit anything and if it's a descendant of the target's character
+ 
+                    if (hit and hit:isDescendantOf(char)) or ignoreWalls then
+                        -- only change closest_distance if the target character is visible
+                        closest_distance = distance
+                        most_viable_player = player_being_checked
+                    end -- hit or ignore walls
+ 
+                end -- meets distance or no priority
+ 
+            end -- closes player_or_false
+ 
+        end -- closes player_or_false check
+    end -- closes table loop
+ 
+    blockName = ReturnsBoneOrFalse(most_viable_player)
+    sleeping = true
+    return most_viable_player
+ 
+end -- closes function
+ 
+ 
+function CreateChams()
+    if Chams then
+        for _,q in pairs(camera:GetChildren()) do
+            if q:IsA("BoxHandleAdornment") then
+                q:Destroy()
+            end
+        end
+        for _,v in pairs(game.Players:GetChildren()) do
+            if v.Name ~= game.Players.LocalPlayer.Name and v.Character then
+                for _,c in pairs(v.Character:GetChildren()) do
+                    if c.Name ~= "Head" and c:IsA("BasePart") then
+                        for _,p in pairs(Whitelist) do
+                            if v.TeamColor == game.Players.LocalPlayer.TeamColor or v.Name == p then
+                                local esp = Instance.new("BoxHandleAdornment", camera)
+                                esp.Color3 = Color3.new(0, 255, 0)
+                                esp.Size = c.Size
+                                esp.AlwaysOnTop = true
+                                esp.ZIndex = 1
+                                esp.Adornee = c
+                            elseif v.TeamColor ~= game.Players.LocalPlayer.TeamColor then
+                                local esp = Instance.new("BoxHandleAdornment", camera)
+                                esp.Color3 = Color3.new(255, 0, 0)
+                                esp.Size = c.Size
+                                esp.AlwaysOnTop = true
+                                esp.ZIndex = 1
+                                esp.Adornee = c
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+ 
+CreateChams()
+ 
+game.Workspace.ChildAdded:connect(function(child)
+    if child:IsA("Model") or child:IsA("Folder") then
+        CreateChams()
+    end
+end)
+ 
+game.Workspace.ChildRemoved:connect(function(child)
+    if child:IsA("Model") or child:IsA("Folder") then
+        CreateChams()
+    end
+end)
+ 
+game.Players.LocalPlayer.Changed:connect(function()
+    CreateChams()
+end)
+ 
+local function TargetPlayer(player) -- this needs to be refactored
+ 
+    -- not needed anymore unless you want sticky aim (this can be a good thing) or the aimbot lags you
+    -- sticky aim would be defined as "wont instantly target another guy if they enter the screen"
+ 
+    -- if ticksslept == 15 then -- ok
+    --  ticksslept = 0
+    --  sleeping = false
+    -- end
+   
+    if aim_through_list[3] then
+        aim_through_list[3].Position = aim_through_list[3].Position + Vector3.new(0,200,0)
+        table.remove(aim_through_list, 3)
+    end
+ 
+    if not player then -- i see this and i pretty much give up on rewriting
+        if lasso then lasso:Destroy() lasso = nil end -- this feels wrong. i cant stand reusing code outside functions >:(
+        target = nil
+        lasso = Instance.new("SelectionPointLasso", camera)
+        lasso.Humanoid, lasso.Point = FindInstance("Humanoid", localplayer.Character, true), mouse.Hit.p
+        lasso.Color3 = Color3.new(0,255,0)
+        return -- this one line here determines a surprising amount about how the aimbot works XD
+        -- thats not a good thing :(
+    end
+ 
+    if RenderLassos then -- should be snaplassos... always gon be lassos tbh
+        if lasso then lasso:Destroy() lasso = nil end
+        lasso = Instance.new("SelectionPartLasso", camera)
+        lasso.Humanoid, lasso.Part = FindInstance("Humanoid", player.Character, true), game.Players.LocalPlayer.Character.Torso
+        lasso.Color3 = Color3.new(0,255,0)
+    end
+ 
+    bone_name = ReturnsBoneOrFalse(player)
+ 
+    if player.Character.Head and bone_name then
+        -- this lets us force headshots :D
+        tele_bone = player.Character[bone_name]
+        tele_bone.Parent = player.Character
+        tele_bone.Size = SpreadControlRadius
+        tele_bone.CanCollide = false
+        tele_bone.CFrame = CFrame.new(workspace.CurrentCamera.CoordinateFrame.p + workspace.CurrentCamera.CoordinateFrame.lookVector * perfect_aim_firstperson_distance, workspace.CurrentCamera.CoordinateFrame.p) -- // thx to my main man safazi,,,, for this and for showing me the magic of coordinateframe <3
+        tele_bone.Transparency=1
+        tele_bone:ClearAllChildren()
+        table.insert(aim_through_list, 3, tele_bone)
+        -- swager
+        target = player
+        return player
+ 
+    end
+ 
+    if bone_name then
+        deathBlock.Parent = player.Character
+        deathBlock.CanCollide = false
+        deathBlock.Name = bone_name
+    else
+        return
+    end
+ 
+    target = player
+    return player
+ 
+end
+ 
+ 
+--[[
+ 
+INIT PROCESS DOCUMENTATION:
+ 
+1] CREATE DEATHBLOCK
+2] MAKE DEATHBLOCK REGENERATE
+3] USE BINDTORENDERSTEP TO START AIMBOT LOOP
+4] DETECT KEY INPUT (WITHOUT USERINPUTSERVICE. I KNOW THAT IM LAME)
+ 
+]]--
+ 
+ 
+CreateBlockOfDeath()
+workspace.DescendantRemoving:connect(function(instance)
+    if instance == deathBlock then CreateBlockOfDeath() end
+end)
+-- Keeps blockie safe :33 XD
+ 
+-- test? havent tried
+local function shoot() -- elysian only :33333 XDd. bother jordan, not mememememe.
+ 
+    if not mouse1press then return end
+ 
+    if trigger_debounce then return end
+ 
+    trigger_debounce = true
+ 
+    if rage_triggers and mouse1press() then
+ 
+        mouse1press()
+        wait(0.1)
+        mouse1release()
+ 
+    elseif mouse1press then
+ 
+        mouse1press()
+        wait(0)
+        mouse1release()
+        wait(trigger_speed)
+ 
+    end
+ 
+    trigger_debounce = false
+ 
+end
+ 
+-- refaactorrrr
+game:GetService("RunService"):BindToRenderStep("First", Enum.RenderPriority.First.Value, function() -- another clusterfuck
+ 
+    if running then
+        if localplayer.Character then -- pretty sure i do this in getviableplayer lmao tbh
+            TargetPlayer(ReturnsViablePlayerOrNil())
+            if target and target.Character then
+                if localplayer:GetMouse().Target == deathBlock then return end -- praise targetfilter!
+                -- later
+                -- deathBlock.CFrame = CFrame.new(localplayer.Character.Head.Position + (mouse.Hit.p + localplayer.Character.Head.Position).unit * 16)
+                -- print(deathBlock)
+                if triggers then shoot() end
+            else
+                deathBlock.Parent = workspace
+            end
+        end
+    end
+ 
+end)
+ 
+local Keys = Instance.new("ScreenGui", game.Players.LocalPlayer.PlayerGui)
+Keys.Name = "AimWorks Container"
+local Frame = Instance.new("Frame", Keys)
+Frame.Name = "Holder"
+Frame.BackgroundColor3 = Color3.new(62/255, 62/255, 62/255)
+Frame.BackgroundTransparency = 0.3
+Frame.BorderSizePixel = 2
+Frame.BorderColor3 = Color3.new(255,255,255)
+Frame.Size = UDim2.new(0, 200, 0, 300)
+Frame.Position = UDim2.new(0, 0, 0.5, 0)
+local Aim = Instance.new("TextLabel", Frame)
+Aim.BackgroundTransparency = 1
+Aim.Size = UDim2.new(0, 200, 0, 100)
+Aim.FontSize = "Size32"
+Aim.Font = "SourceSans"
+Aim.Text = " Rendering Lassos: "..tostring(RenderLassos).." \n Key: "..lassokey
+Aim.TextColor3 = Color3.new(255, 255, 255)
+Aim.TextXAlignment = "Left"
+Aim.TextStrokeTransparency = 0
+Aim.TextYAlignment = "Top"
+Aim.TextWrapped = true
+local Team = Instance.new("TextLabel", Frame)
+Team.Position = UDim2.new(0, 0, 0, 100)
+Team.BackgroundTransparency = 1
+Team.Size = UDim2.new(0, 200, 0, 100)
+Team.FontSize = "Size32"
+Team.Font = "SourceSans"
+Team.Text = " Team Check: \n "..tostring(ShootingTeam).." \n Key: "..toggle_teamcheck
+Team.TextColor3 = Color3.new(255, 255, 255)
+Team.TextXAlignment = "Left"
+Team.TextStrokeTransparency = 0
+Team.TextYAlignment = "Top"
+Team.TextWrapped = true
+local Run = Instance.new("TextLabel", Frame)
+Run.Position = UDim2.new(0, 0, 0, 200)
+Run.BackgroundTransparency = 1
+Run.Size = UDim2.new(0, 200, 0, 100)
+Run.FontSize = "Size32"
+Run.Font = "SourceSans"
+Run.Text = " Running: "..tostring(running).." \n Key: "..aimkey
+Run.TextColor3 = Color3.new(255, 255, 255)
+Run.TextXAlignment = "Left"
+Run.TextStrokeTransparency = 0
+Run.TextYAlignment = "Top"
+Run.TextWrapped = true
+ 
+local keydown = mouse.KeyDown:connect(function(keys)
+    if (keys == aimkey) then
+        running = not running
+        if (running) then
+            print("[SILENTAIM] activated.")
+            Run.Text = " Running: "..tostring(running).." \n Key: "..aimkey
+        else
+            print("[SILENTAIM] deactivated.")
+            Run.Text = " Running: "..tostring(running).." \n Key: "..aimkey
+        end
+    end
+end)
+ 
+local keydowns = mouse.KeyDown:connect(function(keys)
+    if (keys == toggle_teamcheck) then
+        if (ShootingTeam) then
+            print("[SILENTAIM] Team Shooting deactivated")
+            ShootingTeam = false
+            Team.Text = " Team Check: \n "..tostring(ShootingTeam).." \n Key: "..toggle_teamcheck
+        else
+            print("[SILENTAIM] Team Shooting activated")
+            ShootingTeam = true
+            Team.Text = " Team Check: \n "..tostring(ShootingTeam).." \n Key: "..toggle_teamcheck
+        end
+    end
+end)
+ 
+local keydowns = mouse.KeyDown:connect(function(keys)
+    if (keys == lassokey) then
+        if (RenderLassos) then
+            print("[SILENTAIM] No Longer Rendering Lassos")
+            RenderLassos = false
+            Aim.Text = " Rendering Lassos: "..tostring(RenderLassos).." \n Key: "..lassokey
+        else
+            print("[SILENTAIM] Rendering Lassos")
+            RenderLassos = true
+            Aim.Text = " Rendering Lassos: "..tostring(RenderLassos).." \n Key: "..lassokey
+        end
+    end
+end)
+ 
+local keydowns = mouse.KeyDown:connect(function(keys)
+    if (keys == control) then
+        if (Frame.Visible == true) then
+            Frame.Visible = false
+        else
+           Frame.Visible = true
+        end
+    end
+end)
+end)
+
+Noclip.Name = "Noclip"
+Noclip.Parent = PhantomHax
+Noclip.BackgroundColor3 = Color3.new(0, 0, 0)
+Noclip.Position = UDim2.new(0.00129787344, 0, 2.45623827, 0)
+Noclip.Size = UDim2.new(0, 200, 0, 50)
+Noclip.Font = Enum.Font.Cartoon
+Noclip.FontSize = Enum.FontSize.Size14
+Noclip.Text = "Noclip"
+Noclip.TextColor3 = Color3.new(1, 1, 1)
+Noclip.TextScaled = true
+Noclip.TextSize = 14
+Noclip.TextWrapped = true
+
+(Noclip).MouseButton1Down:connect(function()
+local noclip = true char = game.Players.LocalPlayer.Character while true do if noclip == true then for _,v in pairs(char:children()) do pcall(function() if v.className == "Part" then v.CanCollide = false elseif v.ClassName == "Model" then v.Head.CanCollide = false end end) end end game:service("RunService").Stepped:wait()
+end
+end)
